@@ -6,10 +6,12 @@
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
 #include <chrono>
+#include <wincodec.h>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -19,10 +21,10 @@ using std::chrono::duration;
 struct Vertex
 {
 	XMFLOAT3 pos;
-	XMFLOAT4 color;
+	XMFLOAT2 texCoord;
 
-	Vertex(float x, float y, float z, float r, float g, float b, float a)
-		: pos(x, y, z), color(r, g, b, a)
+	Vertex(float x, float y, float z, float u, float v)
+		: pos(x, y, z), texCoord(u, v)
 	{
 	}
 };
@@ -84,9 +86,6 @@ private:
 
 	// constant buffers
 	ComPtr<ID3D12DescriptorHeap> m_cbDescriptorHeap[2];
-	ComPtr<ID3D12Resource> m_cbColorMultiplierUploadHeap[2];
-	ColorMultiplier m_cbColorMultiplierData;
-	UINT8* m_cbColorMultiplierGpuAddress[2];
 
 	ComPtr<ID3D12Resource> m_cbWvpUploadHeap[2];
 	Wvp m_wvpData;
@@ -103,6 +102,12 @@ private:
 	XMFLOAT4 m_cameraPosition;
 	XMFLOAT4 m_cameraRotation;
 
+	// textures
+	BYTE* m_textureData;
+	ComPtr<ID3D12Resource> m_textureDefaultHeap;
+	ComPtr<ID3D12Resource> m_textureUploadHeap;
+	ComPtr<ID3D12DescriptorHeap> m_textureDescriptorHeap;
+
 	int m_frameIndex;	// render target index
 	UINT m_rtvDescriptorSize;	// Render Target View descriptor heap size
 	UINT64 m_fenceValue;
@@ -113,6 +118,7 @@ private:
 
 	void CreateRootSignature();
 	void LoadShaders();
+	void LoadTextures();
 	void CreatePipelineStateObject();
 	void CreateVertexBuffer();
 	void FillOutViewportAndScissorRect();
@@ -126,8 +132,6 @@ public:
 
 	void Init(HWND hwnd);
 	void Input(float mouseX, float mouseY, bool rightMouseBtnPressed);
-	void InputRightBtnPressed(float mouseX, float mouseY);
-	void InputRightBtnReleased();
 	void Update();
 	void Render();
 	void Destroy();

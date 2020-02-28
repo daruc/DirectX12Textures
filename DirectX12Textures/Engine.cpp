@@ -73,50 +73,67 @@ void Engine::WaitForPreviousFrame()
 
 void Engine::CreateRootSignature()
 {
-	D3D12_DESCRIPTOR_RANGE descriptorTableRanges[1];
-	descriptorTableRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-	descriptorTableRanges[0].NumDescriptors = 1;
-	descriptorTableRanges[0].BaseShaderRegister = 0;
-	descriptorTableRanges[0].RegisterSpace = 0;
-	descriptorTableRanges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-	// color multiplier
-	D3D12_ROOT_DESCRIPTOR_TABLE rootDescriptorTable;
-	rootDescriptorTable.NumDescriptorRanges = 1;
-	rootDescriptorTable.pDescriptorRanges = descriptorTableRanges;
-
 	// WVP matrix
 	D3D12_ROOT_DESCRIPTOR rootDescriptor;
-	rootDescriptor.ShaderRegister = 1;
+	rootDescriptor.ShaderRegister = 0;
 	rootDescriptor.RegisterSpace = 0;
 
 	D3D12_ROOT_PARAMETER rootParameters[2];
-	// color multiplier
-	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-	rootParameters[0].DescriptorTable = rootDescriptorTable;
-	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
 	// WVP matrix
-	rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-	rootParameters[1].Descriptor = rootDescriptor;
-	rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	rootParameters[0].Descriptor = rootDescriptor;
+	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+	// texture
+	D3D12_DESCRIPTOR_RANGE descriptorRanges[1];
+	descriptorRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	descriptorRanges[0].NumDescriptors = 1;
+	descriptorRanges[0].BaseShaderRegister = 0;
+	descriptorRanges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+	descriptorRanges[0].RegisterSpace = 0;
+
+	D3D12_ROOT_DESCRIPTOR_TABLE descriptorTable;
+	descriptorTable.NumDescriptorRanges = 1;
+	descriptorTable.pDescriptorRanges = &descriptorRanges[0];
+
+	rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[1].DescriptorTable = descriptorTable;
+	rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// sampler
+	D3D12_STATIC_SAMPLER_DESC sampler = {};
+	sampler.Filter = D3D12_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
+	sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	sampler.MipLODBias = 0;
+	sampler.MaxAnisotropy = 0;
+	sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	sampler.MinLOD = 0.0f;
+	sampler.MaxLOD = D3D12_FLOAT32_MAX;
+	sampler.ShaderRegister = 0;
+	sampler.RegisterSpace = 0;
+	sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
 
 	rootSignatureDesc.Init(_countof(rootParameters),
 		rootParameters,
-		0,
-		nullptr,
+		1,
+		&sampler,
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
 		D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-		D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
-		D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS
+		D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS
 	);
 
+	ID3DBlob* errorBuffer;
 	ID3DBlob* signature;
-	HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, nullptr);
+	HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &errorBuffer);
 	if (FAILED(hr))
 	{
+		OutputDebugStringA((char*)errorBuffer->GetBufferPointer());
 		exit(-1);
 	}
 	
@@ -150,13 +167,174 @@ void Engine::LoadShaders()
 	}
 }
 
+void Engine::LoadTextures()
+{
+	CoInitialize(nullptr);
+	ComPtr<IWICImagingFactory> imagingFactory = nullptr;
+
+	HRESULT hr = CoCreateInstance(
+		CLSID_WICImagingFactory,
+		nullptr,
+		CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(&imagingFactory)
+	);
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	IWICBitmapDecoder* bitmapDecoder = nullptr;	// TODO: release
+
+	hr = imagingFactory->CreateDecoderFromFilename(
+		TEXT("cube_tex.png"),
+		nullptr,
+		GENERIC_READ,
+		WICDecodeMetadataCacheOnDemand,
+		&bitmapDecoder
+	);
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	IWICBitmapFrameDecode* frame = nullptr;	// TODO: release
+	UINT textureWidth, textureHeight;
+
+	hr = bitmapDecoder->GetFrame(0, &frame);
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	hr = frame->GetSize(&textureWidth, &textureHeight);
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	UINT textureSize = textureWidth * textureHeight * 4;
+	if (textureSize == 0)
+	{
+		exit(-1);
+	}
+
+	WICPixelFormatGUID pixelFormat;
+	hr = frame->GetPixelFormat(&pixelFormat);
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	m_textureData = new BYTE[textureSize];
+
+	UINT bytesPerRow = textureWidth * 4;
+	hr = frame->CopyPixels(nullptr, bytesPerRow, textureSize, m_textureData);
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	D3D12_RESOURCE_DESC textureDesc = {};
+	textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	textureDesc.Alignment = 0;
+	textureDesc.Width = textureWidth;
+	textureDesc.Height = textureHeight;
+	textureDesc.DepthOrArraySize = 1;
+	textureDesc.MipLevels = 1;
+	textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	textureDesc.SampleDesc.Count = 1;
+	textureDesc.SampleDesc.Quality = 0;
+	textureDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+	hr = m_device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+		D3D12_HEAP_FLAG_NONE,
+		&textureDesc,
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		nullptr,
+		IID_PPV_ARGS(&m_textureDefaultHeap)
+	);
+
+	m_textureDefaultHeap->SetName(TEXT("Texture Buffer Resource Heap"));
+	
+	UINT64 textureBufferUploadSize;
+	m_device->GetCopyableFootprints(&textureDesc, 0, 1, 0, nullptr, nullptr, nullptr, &textureBufferUploadSize);
+
+	hr = m_device->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(textureBufferUploadSize),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&m_textureUploadHeap)
+	);
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	m_textureUploadHeap->SetName(TEXT("Texture Upload Heap"));
+
+	// SRV descriptor heap
+	D3D12_DESCRIPTOR_HEAP_DESC srvDescriptorHeapDesc = {};
+	srvDescriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	srvDescriptorHeapDesc.NumDescriptors = 1;
+	srvDescriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+
+	hr = m_device->CreateDescriptorHeap(&srvDescriptorHeapDesc, IID_PPV_ARGS(&m_textureDescriptorHeap));
+
+	if (FAILED(hr))
+	{
+		exit(-1);
+	}
+
+	m_textureDescriptorHeap->SetName(TEXT("Texture Descriptor Heap"));
+
+	// SRV descriptor
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = textureDesc.Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+
+	m_device->CreateShaderResourceView(
+		m_textureDefaultHeap.Get(),
+		&srvDesc,
+		m_textureDescriptorHeap->GetCPUDescriptorHandleForHeapStart()
+	);
+
+	// store texture in upload heap
+	D3D12_SUBRESOURCE_DATA textureSubresource = {};
+	textureSubresource.pData = m_textureData;
+	textureSubresource.RowPitch = bytesPerRow;
+	textureSubresource.SlicePitch = bytesPerRow * textureHeight;
+
+	UpdateSubresources(m_commandList.Get(), m_textureDefaultHeap.Get(), m_textureUploadHeap.Get(), 0, 0, 1, &textureSubresource);
+
+	m_commandList->ResourceBarrier(
+		1,
+		&CD3DX12_RESOURCE_BARRIER::Transition(
+			m_textureDefaultHeap.Get(),
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+		)
+	);
+}
+
 void Engine::CreatePipelineStateObject()
 {
 	// input layout
 	D3D12_INPUT_ELEMENT_DESC inputLayout[] =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+		{ "TEX_COORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
 	};
 
 	D3D12_INPUT_LAYOUT_DESC inputLayoutDesc = {};
@@ -202,16 +380,41 @@ void Engine::CreateVertexBuffer()
 {
 	Vertex vList[] = {
 
-		{ -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
-		{ 0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
-		{ 0.5f, 0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
-		{ -0.5f, 0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
+		// front
+		{ -0.5f,  0.5f, -0.5f, 0.0f, 0.0f },
+		{  0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
+		{ -0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
+		{  0.5f,  0.5f, -0.5f, 1.0f, 0.0f },
 
-		{ -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
-		{ 0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
-		{ 0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
-		{ -0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
+		// right
+		{  0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
+		{  0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
+		{  0.5f, -0.5f,  0.5f, 1.0f, 1.0f },
+		{  0.5f,  0.5f, -0.5f, 0.0f, 0.0f },
 
+		// left
+		{ -0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
+		{ -0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
+		{ -0.5f, -0.5f,  0.5f, 0.0f, 1.0f },
+		{ -0.5f,  0.5f, -0.5f, 1.0f, 0.0f },
+
+		// back
+		{  0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
+		{ -0.5f, -0.5f,  0.5f, 1.0f, 1.0f },
+		{  0.5f, -0.5f,  0.5f, 0.0f, 1.0f },
+		{ -0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
+
+		// top
+		{ -0.5f,  0.5f, -0.5f, 0.0f, 1.0f },
+		{  0.5f,  0.5f,  0.5f, 1.0f, 0.0f },
+		{  0.5f,  0.5f, -0.5f, 1.0f, 1.0f },
+		{ -0.5f,  0.5f,  0.5f, 0.0f, 0.0f },
+
+		// bottom
+		{  0.5f, -0.5f,  0.5f, 0.0f, 0.0f },
+		{ -0.5f, -0.5f, -0.5f, 1.0f, 1.0f },
+		{  0.5f, -0.5f, -0.5f, 0.0f, 1.0f },
+		{ -0.5f, -0.5f,  0.5f, 1.0f, 0.0f }
 	};
 
 	int vBufferSize = sizeof(vList);
@@ -262,27 +465,27 @@ void Engine::CreateVertexBuffer()
 	DWORD iList[] = {
 		// front
 		0, 1, 2,
-		0, 2, 3,
-
-		// back
-		4, 7, 6,
-		4, 6, 5,
+		0, 3, 1,
 
 		// left
-		0, 3, 7,
-		0, 7, 4,
+		4, 5, 6,
+		4, 7, 5,
 
 		// right
-		1, 6, 2,
-		1, 5, 6,
+		8, 9, 10,
+		8, 11, 9,
 
-		// up
-		3, 6, 7,
-		3, 2, 6,
+		// back
+		12, 13, 14,
+		12, 15, 13,
 
-		// down
-		0, 4, 5,
-		0, 5, 1
+		// top
+		16, 17, 18,
+		16, 19, 17,
+
+		// bottom
+		20, 21, 22,
+		20, 23, 21
 	};
 
 	int iBufferSize = sizeof(iList);
@@ -432,37 +635,6 @@ void Engine::CreateConstantBuffers()
 	// resource heap
 	for (int i = 0; i < 2; ++i)
 	{
-		// color multiplier
-
-		hr = m_device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-			D3D12_HEAP_FLAG_NONE,
-			&CD3DX12_RESOURCE_DESC::Buffer(1024 * 64),
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_PPV_ARGS(&m_cbColorMultiplierUploadHeap[i]));
-
-		if (FAILED(hr))
-		{
-			exit(-1);
-		}
-
-		m_cbColorMultiplierUploadHeap[i]->SetName(L"Constant Buffer Color Multiplier Upload Heap");
-
-		D3D12_CONSTANT_BUFFER_VIEW_DESC cbvColorMultiplierDesc = {};
-		cbvColorMultiplierDesc.BufferLocation = m_cbColorMultiplierUploadHeap[i]->GetGPUVirtualAddress();
-		cbvColorMultiplierDesc.SizeInBytes = (sizeof(ColorMultiplier) + 255) & ~255;
-		m_device->CreateConstantBufferView(&cbvColorMultiplierDesc, m_cbDescriptorHeap[i]->GetCPUDescriptorHandleForHeapStart());
-
-		m_cbColorMultiplierData = {};
-
-		CD3DX12_RANGE readRange(0, 0);
-		hr = m_cbColorMultiplierUploadHeap[i]->Map(0, &readRange, reinterpret_cast<void**>(&m_cbColorMultiplierGpuAddress[i]));
-		if (FAILED(hr))
-		{
-			exit(-1);
-		}
-		memcpy(m_cbColorMultiplierGpuAddress[i], &m_cbColorMultiplierData, sizeof(m_cbColorMultiplierData));
-
 		// WVP matrix
 
 		hr = m_device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE::D3D12_HEAP_TYPE_UPLOAD),
@@ -483,13 +655,8 @@ void Engine::CreateConstantBuffers()
 		cbWvpDesc.BufferLocation = m_cbWvpUploadHeap[i]->GetGPUVirtualAddress();
 		cbWvpDesc.SizeInBytes = (sizeof(Wvp) + 255) & ~255;
 
-		UINT colorMultiplierDescriptorIncrementSize =
-			m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-		CD3DX12_CPU_DESCRIPTOR_HANDLE cbWvpCpuDescriptorHandle(m_cbDescriptorHeap[i]->GetCPUDescriptorHandleForHeapStart());
-		cbWvpCpuDescriptorHandle.Offset(1, colorMultiplierDescriptorIncrementSize);
-
-		m_device->CreateConstantBufferView(&cbWvpDesc, cbWvpCpuDescriptorHandle);
+		m_device->CreateConstantBufferView(&cbWvpDesc, m_cbDescriptorHeap[i]->GetCPUDescriptorHandleForHeapStart());
+		CD3DX12_RANGE readRange(0, 0);
 		m_cbWvpUploadHeap[i]->Map(0, &readRange, reinterpret_cast<void**>(&m_cbWvpGpuAddress[i]));
 
 		memcpy(m_cbWvpGpuAddress[i], &m_wvpData, sizeof(Wvp));
@@ -774,6 +941,7 @@ void Engine::Init(HWND hwnd)
 	CreateRootSignature();
 	LoadShaders();
 	CreatePipelineStateObject();
+	LoadTextures();
 	InitWvp();
 	CreateConstantBuffers();
 	CreateVertexBuffer();
@@ -801,26 +969,6 @@ void Engine::Update()
 	high_resolution_clock::time_point now = high_resolution_clock::now();
 	float deltaSec = duration<float>(now - m_prevTime).count();
 	m_prevTime = now;
-
-	// color multiplier
-	m_cbColorMultiplierData.colorMultiplier.x += 0.05f * deltaSec;
-	m_cbColorMultiplierData.colorMultiplier.y += 0.09f * deltaSec;
-	m_cbColorMultiplierData.colorMultiplier.z += 0.03f * deltaSec;
-
-	if (m_cbColorMultiplierData.colorMultiplier.x > 1.0f)
-	{
-		m_cbColorMultiplierData.colorMultiplier.x = 0.0f;
-	}
-	if (m_cbColorMultiplierData.colorMultiplier.y > 1.0f)
-	{
-		m_cbColorMultiplierData.colorMultiplier.y = 0.0f;
-	}
-	if (m_cbColorMultiplierData.colorMultiplier.z > 1.0f)
-	{
-		m_cbColorMultiplierData.colorMultiplier.z = 0.0f;
-	}
-
-	memcpy(m_cbColorMultiplierGpuAddress[m_frameIndex], &m_cbColorMultiplierData, sizeof(m_cbColorMultiplierData));
 
 	// WVP matrix
 	UpdateWvp(deltaSec);
@@ -865,8 +1013,11 @@ void Engine::Render()
 	// constant buffer descriptor heap
 	ID3D12DescriptorHeap* descriptorHeaps[] = { m_cbDescriptorHeap[m_frameIndex].Get() };
 	m_commandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-	m_commandList->SetGraphicsRootDescriptorTable(0, m_cbDescriptorHeap[m_frameIndex]->GetGPUDescriptorHandleForHeapStart());
-	m_commandList->SetGraphicsRootConstantBufferView(1, m_cbWvpUploadHeap[m_frameIndex]->GetGPUVirtualAddress());
+	m_commandList->SetGraphicsRootConstantBufferView(0, m_cbWvpUploadHeap[m_frameIndex]->GetGPUVirtualAddress());
+
+	descriptorHeaps[0] = m_textureDescriptorHeap.Get();
+	m_commandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+	m_commandList->SetGraphicsRootDescriptorTable(1, m_textureDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
 	m_commandList->RSSetViewports(1, &m_viewport);
 	m_commandList->RSSetScissorRects(1, &m_scissorRect);
@@ -902,5 +1053,6 @@ void Engine::Render()
 void Engine::Destroy()
 {
 	CloseHandle(m_fenceEvent);
+	delete[] m_textureData;
 }
 
